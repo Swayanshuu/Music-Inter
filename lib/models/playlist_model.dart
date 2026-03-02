@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 class PlaylistModel {
   final String id;
   final String name;
@@ -21,11 +23,16 @@ class PlaylistModel {
       name: map['name'] ?? '',
       userId: map['userId'] ?? '',
       description: map['description'],
-      createdAt: map['createdAt'] != null
-          ? (map['createdAt'] as dynamic).toDate()
-          : DateTime.now(),
+      createdAt: _parseDate(map['createdAt']),
       songCount: map['songCount'] ?? 0,
     );
+  }
+
+  static DateTime _parseDate(dynamic date) {
+    if (date == null) return DateTime.now();
+    if (date is DateTime) return date;
+    if (date is Timestamp) return date.toDate();
+    return DateTime.now();
   }
 
   Map<String, dynamic> toMap() {

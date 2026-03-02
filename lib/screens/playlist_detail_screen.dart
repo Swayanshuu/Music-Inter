@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -16,77 +17,122 @@ class PlaylistDetailScreen extends StatefulWidget {
 
 class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<PlaylistProvider>().listenToSongs(widget.playlist.id);
-    });
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final provider = context.watch<PlaylistProvider>();
-    final songs = provider.getSongsForPlaylist(widget.playlist.id);
+    final provider = context.read<PlaylistProvider>();
 
     return Scaffold(
       appBar: AppBar(title: Text(widget.playlist.name)),
-      body: songs.isEmpty
-          ? const Center(
-              child: Text(
-                'No songs in this playlist.\nAdd some songs!',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 18),
-              ),
-            )
-          : ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: songs.length,
-              itemBuilder: (context, index) {
-                final song = songs[index];
-                return Card(
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.all(16),
-                    leading: const CircleAvatar(child: Icon(Icons.music_note)),
-                    title: Text(
-                      song.title,
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Composer: ${song.composer}'),
-                        const SizedBox(height: 4),
-                        InkWell(
-                          onTap: () => _openLink(song.musicLink),
+      body: StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance
+            .collection('songs')
+            .where('playlistId', isEqualTo: widget.playlist.id)
+            .snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Center(child: Text('Error: ${snapshot.error}'));
+          }
+
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final songs = snapshot.hasData
+              ? snapshot.data!.docs
+                    .map(
+                      (d) => SongModel.fromMap(
+                        d.data() as Map<String, dynamic>,
+                        d.id,
+                      ),
+                    )
+                    .toList()
+              : <SongModel>[];
+
+          return RefreshIndicator(
+            onRefresh: () async {
+              await Future.delayed(const Duration(milliseconds: 500));
+            },
+            child: songs.isEmpty
+                ? ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: [
+                      SizedBox(
+                        height: MediaQuery.of(context).size.height * 0.7,
+                        child: const Center(
                           child: Text(
-                            'Play Link',
-                            style: TextStyle(
-                              color: Theme.of(context).primaryColor,
-                              decoration: TextDecoration.underline,
-                            ),
+                            'No songs in this playlist.\nAdd some songs!',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(fontSize: 18),
                           ),
                         ),
-                      ],
-                    ),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.edit, color: Colors.blue),
-                          onPressed: () =>
-                              _showEditSongDialog(context, song, provider),
+                      ),
+                    ],
+                  )
+                : ListView.builder(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.all(16),
+                    itemCount: songs.length,
+                    itemBuilder: (context, index) {
+                      final song = songs[index];
+                      return Card(
+                        child: ListTile(
+                          contentPadding: const EdgeInsets.all(16),
+                          leading: const CircleAvatar(
+                            child: Icon(Icons.music_note),
+                          ),
+                          title: Text(
+                            song.title,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Composer: ${song.composer}'),
+                              const SizedBox(height: 4),
+                              InkWell(
+                                onTap: () => _openLink(song.musicLink),
+                                child: Text(
+                                  'Play Link',
+                                  style: TextStyle(
+                                    color: Theme.of(context).primaryColor,
+                                    decoration: TextDecoration.underline,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.edit,
+                                  color: Colors.blue,
+                                ),
+                                onPressed: () => _showEditSongDialog(
+                                  context,
+                                  song,
+                                  provider,
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.delete,
+                                  color: Colors.red,
+                                ),
+                                onPressed: () => provider.deleteSong(
+                                  song.id,
+                                  widget.playlist.id,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                        IconButton(
-                          icon: const Icon(Icons.delete, color: Colors.red),
-                          onPressed: () =>
-                              provider.deleteSong(song.id, widget.playlist.id),
-                        ),
-                      ],
-                    ),
+                      );
+                    },
                   ),
-                );
-              },
-            ),
+          );
+        },
+      ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _showAddSongDialog(context, provider),
         icon: const Icon(Icons.add),
@@ -161,6 +207,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     SongModel song,
     PlaylistProvider provider,
   ) {
+    final titleController = TextEditingController(text: song.title);
     final composerController = TextEditingController(text: song.composer);
     final linkController = TextEditingController(text: song.musicLink);
 
@@ -173,9 +220,9 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  'Title: ${song.title}',
-                  style: const TextStyle(fontWeight: FontWeight.bold),
+                TextField(
+                  controller: titleController,
+                  decoration: const InputDecoration(labelText: 'Song Title'),
                 ),
                 const SizedBox(height: 12),
                 TextField(
@@ -197,12 +244,16 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
             ),
             ElevatedButton(
               onPressed: () {
+                final title = titleController.text.trim();
                 final composer = composerController.text.trim();
                 final link = linkController.text.trim();
-                if (composer.isNotEmpty && link.isNotEmpty) {
+                if (title.isNotEmpty &&
+                    composer.isNotEmpty &&
+                    link.isNotEmpty) {
                   provider.updateSong(
                     songId: song.id,
                     playlistId: widget.playlist.id,
+                    title: title,
                     composer: composer,
                     musicLink: link,
                   );
@@ -219,9 +270,9 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
   Future<void> _openLink(String urlStr) async {
     final url = Uri.parse(urlStr);
-    if (await canLaunchUrl(url)) {
-      await launchUrl(url, mode: LaunchMode.inAppWebView);
-    } else {
+    try {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,

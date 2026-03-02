@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
@@ -15,6 +16,9 @@ class PlaylistProvider extends ChangeNotifier {
   bool _isLoading = false;
   String? _error;
 
+  StreamSubscription? _playlistsSub;
+  StreamSubscription? _songsSub;
+
   List<PlaylistModel> get playlists => _playlists;
   List<SongModel> get songs => _songs;
   bool get isLoading => _isLoading;
@@ -26,6 +30,8 @@ class PlaylistProvider extends ChangeNotifier {
       if (uid != null) {
         listenToPlaylists();
       } else {
+        _playlistsSub?.cancel();
+        _songsSub?.cancel();
         _playlists = [];
         _songs = [];
         notifyListeners();
@@ -34,17 +40,24 @@ class PlaylistProvider extends ChangeNotifier {
   }
 
   void listenToPlaylists() {
-    _db
+    _playlistsSub?.cancel();
+    _playlistsSub = _db
         .collection('playlists')
         .where('userId', isEqualTo: _userId)
         .orderBy('createdAt', descending: true)
         .snapshots()
-        .listen((snap) {
-          _playlists = snap.docs
-              .map((d) => PlaylistModel.fromMap(d.data(), d.id))
-              .toList();
-          notifyListeners();
-        });
+        .listen(
+          (snap) {
+            _playlists = snap.docs
+                .map((d) => PlaylistModel.fromMap(d.data(), d.id))
+                .toList();
+            notifyListeners();
+          },
+          onError: (error) {
+            _error = error.toString();
+            notifyListeners();
+          },
+        );
   }
 
   Future<void> createPlaylist(String name, {String? description}) async {
@@ -58,6 +71,19 @@ class PlaylistProvider extends ChangeNotifier {
         createdAt: DateTime.now(),
       );
       await _db.collection('playlists').add(playlist.toMap());
+    } catch (e) {
+      _error = e.toString();
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  Future<void> updatePlaylist(String playlistId, String newName) async {
+    _setLoading(true);
+    try {
+      await _db.collection('playlists').doc(playlistId).update({
+        'name': newName,
+      });
     } catch (e) {
       _error = e.toString();
     } finally {
@@ -86,17 +112,24 @@ class PlaylistProvider extends ChangeNotifier {
   }
 
   void listenToSongs(String playlistId) {
-    _db
+    _songsSub?.cancel();
+    _songsSub = _db
         .collection('songs')
         .where('playlistId', isEqualTo: playlistId)
         .orderBy('createdAt', descending: false)
         .snapshots()
-        .listen((snap) {
-          _songs = snap.docs
-              .map((d) => SongModel.fromMap(d.data(), d.id))
-              .toList();
-          notifyListeners();
-        });
+        .listen(
+          (snap) {
+            _songs = snap.docs
+                .map((d) => SongModel.fromMap(d.data(), d.id))
+                .toList();
+            notifyListeners();
+          },
+          onError: (error) {
+            _error = error.toString();
+            notifyListeners();
+          },
+        );
   }
 
   Future<void> addSong({
@@ -129,12 +162,14 @@ class PlaylistProvider extends ChangeNotifier {
   Future<void> updateSong({
     required String songId,
     required String playlistId,
+    required String title,
     required String composer,
     required String musicLink,
   }) async {
     _setLoading(true);
     try {
       await _db.collection('songs').doc(songId).update({
+        'title': title,
         'composer': composer,
         'musicLink': musicLink,
       });
